@@ -186,6 +186,13 @@ appraise() { # $1 transcript path, $2 model spec, $3 brief (true|false)  → set
 	dbg "extracted $(printf '%s' "$turn" | wc -c | tr -d ' ') bytes"
 	user="$(printf '%s' "$turn" | jq -r '.user')"
 	assistant="$(printf '%s' "$turn" | jq -r '.assistant')"
+	# Stop can fire before the final text reaches the transcript; the hook input
+	# carries that text as last_assistant_message, so splice it in when missing.
+	if [ -n "${LAST_MESSAGE:-}" ] && [ "${assistant#*"${LAST_MESSAGE:0:200}"}" = "$assistant" ]; then
+		dbg "final text missing from transcript; appending last_assistant_message"
+		assistant="${assistant:+$assistant
+}$LAST_MESSAGE"
+	fi
 	if [ -z "$assistant" ]; then
 		TAKE="No assistant turn to appraise yet, sire."
 		return 1
@@ -249,8 +256,8 @@ Choose another with /vizier model <spec>, where <spec> is one of:
 		state_set model "$spec"
 		block "🐉 The Vizier shall speak through $spec."
 		;;
-	*)
-		# "" → persisted model; anything else → one-shot model override, as in pi-vizier.
+	"" | haiku | sonnet | opus | claude-* | http://* | https://* | openai/*)
+		# "" → persisted model; a known spec form → one-shot model override, as in pi-vizier.
 		local spec; spec="$(resolve_model "$arg")"
 		if appraise "$transcript" "$spec" false; then
 			block "🐉 The Vizier ($spec)
@@ -259,6 +266,9 @@ $TAKE"
 		else
 			block "🐉 $TAKE"
 		fi
+		;;
+	*)
+		block "🐉 The Vizier does not know '$arg', sire. Usage: /vizier [on|off|model [spec]|spec]"
 		;;
 	esac
 }
@@ -270,6 +280,7 @@ hook_stop() {
 	[ "$(state_get auto)" = "true" ] || hush
 	local transcript spec
 	transcript="$(printf '%s' "$input" | jq -r '.transcript_path // empty')"
+	LAST_MESSAGE="$(printf '%s' "$input" | jq -r '.last_assistant_message // empty')"
 	spec="$(resolve_model "")"
 	# The Vizier holds his tongue when the court is in disarray.
 	appraise "$transcript" "$spec" true || hush
