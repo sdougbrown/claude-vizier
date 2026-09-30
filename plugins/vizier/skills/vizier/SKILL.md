@@ -1,8 +1,8 @@
 ---
 name: vizier
-description: The Vizier appraises the agent's last turn with a second model. Usage — /vizier [on|off|model|model <spec>|<spec>]
+description: The Vizier appraises the agent's last turn with a second model. Usage — /vizier [on|off|model [spec]|key [token|clear]|<spec>]
 disable-model-invocation: true
-argument-hint: "[on|off|model [spec]|spec]"
+argument-hint: "[on|off|model [spec]|key [token|clear]|spec]"
 ---
 
 The Vizier is normally intercepted by this plugin's UserPromptSubmit hook before

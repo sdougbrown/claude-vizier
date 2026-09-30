@@ -14,7 +14,9 @@
 #                                                       (/v1 appended when the URL has no path;
 #                                                       VIZIER_OPENAI_API_KEY sent if set)
 #   openai/<model>                                    → same, endpoint from VIZIER_OPENAI_BASE_URL
-# State persists to ~/.claude/vizier.json as {"model": "...", "auto": true|false}.
+# API key for those endpoints: VIZIER_OPENAI_API_KEY env > `/vizier key <token>` (persisted).
+# State persists to ~/.claude/vizier.json (mode 0600) as
+#   {"model": "...", "auto": true|false, "key": "..."}.
 
 set -uo pipefail
 
@@ -60,8 +62,19 @@ state_set() { # $1 key, $2 value, $3 "raw" to store as JSON literal (booleans)
 		tmp="$(printf '%s' "$cur" | jq --arg k "$1" --arg v "$2" '.[$k] = $v')"
 	fi
 	[ -n "$tmp" ] || return 1
-	printf '%s\n' "$tmp" >"$STATE_FILE.tmp.$$" && mv -f "$STATE_FILE.tmp.$$" "$STATE_FILE"
+	printf '%s\n' "$tmp" >"$STATE_FILE.tmp.$$" && chmod 600 "$STATE_FILE.tmp.$$" && mv -f "$STATE_FILE.tmp.$$" "$STATE_FILE"
 }
+
+state_unset() { # $1 key
+	local tmp
+	tmp="$(jq --arg k "$1" 'del(.[$k])' "$STATE_FILE" 2>/dev/null)" || return 0
+	[ -n "$tmp" ] || return 1
+	printf '%s\n' "$tmp" >"$STATE_FILE.tmp.$$" && chmod 600 "$STATE_FILE.tmp.$$" && mv -f "$STATE_FILE.tmp.$$" "$STATE_FILE"
+}
+
+resolve_key() { printf '%s' "${VIZIER_OPENAI_API_KEY:-$(state_get key)}"; }
+
+mask() { local k="$1"; if [ "${#k}" -le 8 ]; then printf '%s' "****"; else printf '%s…%s' "${k:0:4}" "${k: -4}"; fi; }
 
 resolve_model() { # $1 explicit spec (may be empty)
 	local spec="${1:-}"
@@ -155,12 +168,13 @@ ask_brain() { # $1 model spec, $2 prompt text
 		base="${base%/}"
 		# host[:port] alone → assume the conventional /v1 prefix.
 		case "${base#*://}" in */*) ;; *) base="$base/v1" ;; esac
-		local body
+		local body key
 		body="$(jq -n --arg m "$model" --arg p "$prompt" '{model: $m, messages: [{role: "user", content: $p}]}')"
-		out="$(curl -sS --max-time 100 -X POST "$base/chat/completions" \
-			-H 'Content-Type: application/json' \
-			${VIZIER_OPENAI_API_KEY:+-H "Authorization: Bearer $VIZIER_OPENAI_API_KEY"} \
-			-d "$body" 2>&1)" || { echo "The Vizier could not reach $base: ${out:0:200}" >&2; return 1; }
+		key="$(resolve_key)"
+		# Headers arrive on stdin (-H @-) so the bearer token never appears in argv / ps.
+		out="$(printf 'Content-Type: application/json\n%s' "${key:+Authorization: Bearer $key}" \
+			| curl -sS --max-time 100 -X POST "$base/chat/completions" -H @- -d "$body" 2>&1)" \
+			|| { echo "The Vizier could not reach $base: ${out:0:200}" >&2; return 1; }
 		local text
 		text="$(printf '%s' "$out" | jq -r '.choices[0].message.content // empty' 2>/dev/null)"
 		if [ -z "$text" ]; then
@@ -247,9 +261,31 @@ Choose another with /vizier model <spec>, where <spec> is one of:
   http://host:port#<model>
       any OpenAI-compatible endpoint, e.g.
       /vizier model http://sparky:4000#qwen3.8:27b
-      (VIZIER_OPENAI_API_KEY is sent if set)
+      (/vizier key <token> if it needs one)
 
 /vizier <spec> uses a model for one appraisal only."
+		;;
+	key)
+		local k; k="$(resolve_key)"
+		if [ -z "$k" ]; then
+			block "🐉 No API key is set, sire. /vizier key <token> stores one in $STATE_FILE (mode 0600) for http(s) endpoints; VIZIER_OPENAI_API_KEY in the environment takes precedence. /vizier key clear forgets it."
+		elif [ -n "${VIZIER_OPENAI_API_KEY:-}" ]; then
+			block "🐉 The Vizier bears the key $(mask "$k") from VIZIER_OPENAI_API_KEY (the environment outranks the persisted key)."
+		else
+			block "🐉 The Vizier bears the key $(mask "$k") from $STATE_FILE. /vizier key clear forgets it."
+		fi
+		;;
+	key\ *)
+		local token; token="$(printf '%s' "${arg#key}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+		case "$token" in
+		clear | none | off)
+			state_unset key || block "🐉 The Vizier could not write $STATE_FILE."
+			block "🐉 The key is forgotten, sire."
+			;;
+		*\ *) block "🐉 A key is a single token, sire: /vizier key <token>" ;;
+		esac
+		state_set key "$token" || block "🐉 The Vizier could not write $STATE_FILE."
+		block "🐉 The Vizier guards the key $(mask "$token") in $STATE_FILE (mode 0600). Note: the token you just typed is also in this session's transcript and prompt history, like any prompt."
 		;;
 	model\ *)
 		local spec; spec="$(printf '%s' "${arg#model}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
@@ -260,7 +296,7 @@ Choose another with /vizier model <spec>, where <spec> is one of:
 		;;
 	"" | *[!\ ]*)
 		# "" → persisted model; any single token → one-shot model override, as in pi-vizier.
-		case "$arg" in *\ *) block "🐉 The Vizier does not know '$arg', sire. Usage: /vizier [on|off|model [spec]|spec]" ;; esac
+		case "$arg" in *\ *) block "🐉 The Vizier does not know '$arg', sire. Usage: /vizier [on|off|model [spec]|key [token|clear]|spec]" ;; esac
 		local spec; spec="$(resolve_model "$arg")"
 		if appraise "$transcript" "$spec" false; then
 			block "🐉 The Vizier ($spec)
