@@ -112,7 +112,7 @@ is a fallback that only runs if the hook did not.
 ### Caveats
 
 - **Auto mode delays the end of each turn** while the Vizier deliberates — about
-  seven seconds with Haiku. Hook output cannot be delivered asynchronously, so
+  ten seconds with Haiku (measured 7–12 s). Hook output cannot be delivered asynchronously, so
   this is the price of the whisper. A fast local model via `openai/…` is cheaper
   and often quicker.
 - **The transcript format is internal to Claude Code** and may change between
