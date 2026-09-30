@@ -59,7 +59,8 @@ state_set() { # $1 key, $2 value, $3 "raw" to store as JSON literal (booleans)
 	else
 		tmp="$(printf '%s' "$cur" | jq --arg k "$1" --arg v "$2" '.[$k] = $v')"
 	fi
-	printf '%s\n' "$tmp" >"$STATE_FILE"
+	[ -n "$tmp" ] || return 1
+	printf '%s\n' "$tmp" >"$STATE_FILE.tmp.$$" && mv -f "$STATE_FILE.tmp.$$" "$STATE_FILE"
 }
 
 resolve_model() { # $1 explicit spec (may be empty)
@@ -253,11 +254,13 @@ Choose another with /vizier model <spec>, where <spec> is one of:
 	model\ *)
 		local spec; spec="$(printf '%s' "${arg#model}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 		[ -n "$spec" ] || block "Name a model, sire: /vizier model <spec>"
-		state_set model "$spec"
+		case "$spec" in *\ *) block "🐉 A model spec is a single token, sire: /vizier model <spec>" ;; esac
+		state_set model "$spec" || block "🐉 The Vizier could not write $STATE_FILE."
 		block "🐉 The Vizier shall speak through $spec."
 		;;
-	"" | haiku | sonnet | opus | claude-* | http://* | https://* | openai/*)
-		# "" → persisted model; a known spec form → one-shot model override, as in pi-vizier.
+	"" | *[!\ ]*)
+		# "" → persisted model; any single token → one-shot model override, as in pi-vizier.
+		case "$arg" in *\ *) block "🐉 The Vizier does not know '$arg', sire. Usage: /vizier [on|off|model [spec]|spec]" ;; esac
 		local spec; spec="$(resolve_model "$arg")"
 		if appraise "$transcript" "$spec" false; then
 			block "🐉 The Vizier ($spec)
@@ -266,9 +269,6 @@ $TAKE"
 		else
 			block "🐉 $TAKE"
 		fi
-		;;
-	*)
-		block "🐉 The Vizier does not know '$arg', sire. Usage: /vizier [on|off|model [spec]|spec]"
 		;;
 	esac
 }
