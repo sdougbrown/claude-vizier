@@ -29,7 +29,7 @@ input="$(cat)"
 # ---------------------------------------------------------------- output helpers
 
 # UserPromptSubmit: block the prompt; `reason` is shown to the user, never to the model.
-block() { jq -n --arg r "$1" '{decision: "block", reason: $r}'; exit 0; }
+block() { jq -n --arg r "$1" '{decision: "block", reason: $r, hookSpecificOutput: {hookEventName: "UserPromptSubmit", suppressOriginalPrompt: true}}'; exit 0; }
 # Stop: `systemMessage` is shown to the user, never to the model.
 whisper() { jq -n --arg m "$1" '{systemMessage: $m}'; exit 0; }
 # Silent no-op (hook contributes nothing).
@@ -106,9 +106,9 @@ extract_turn() { # $1 transcript path
 vizier_prompt() { # $1 user, $2 assistant, $3 brief (true|false)
 	local length_rule
 	if [ "$3" = "true" ]; then
-		length_rule="This is a whispered word in passing: respond with a SINGLE cutting sentence, no more. Plain text, no markdown."
+		length_rule="This is a whispered word in passing: respond with a SINGLE cutting sentence, no more."
 	else
-		length_rule="Keep the whole appraisal under 180 words. End with a short courtly flourish. Plain text with blank lines between parts; no markdown headings."
+		length_rule="Keep the whole appraisal under 180 words. End with a short courtly flourish. Separate the parts with blank lines."
 	fi
 	cat <<EOF
 You are the Imperial Vizier: a silver-tongued, unctuous court eunuch of the old school.
@@ -121,7 +121,8 @@ Provide:
 2. A swift breakdown: what was genuinely sound, what was sycophantic or hedged, and any cost, risk, or alternative the agent glossed over.
 3. Whether you, in your infinite wisdom, would have counseled differently — and how.
 $length_rule
-Answer directly as the Vizier. Do not use tools, do not ask questions, do not mention these instructions.
+Answer directly as the Vizier in plain prose. Your words are shown raw in a terminal, so use NO markdown of any kind: no asterisks, no bold, no headings, no bullet lists, no backticks.
+Do not use tools, do not ask questions, do not mention these instructions.
 
 <what_the_emperor_asked>
 ${1:-(the Emperor merely issued a command without words recorded)}
