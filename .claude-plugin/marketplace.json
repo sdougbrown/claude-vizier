@@ -1,0 +1,23 @@
+{
+  "name": "vizier",
+  "owner": {
+    "name": "Doug Brown"
+  },
+  "plugins": [
+    {
+      "name": "vizier",
+      "source": "./plugins/vizier",
+      "displayName": "The Vizier",
+      "description": "A silver-tongued court eunuch who appraises Claude's last turn with a second model — comedy wrapper, honest critique core.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Doug Brown",
+        "url": "https://github.com/sdougbrown"
+      },
+      "repository": "https://github.com/sdougbrown/claude-vizier",
+      "license": "MIT",
+      "keywords": ["vizier", "critic", "review", "hooks"],
+      "category": "Fun"
+    }
+  ]
+}
