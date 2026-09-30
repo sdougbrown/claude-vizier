@@ -10,9 +10,10 @@
 #
 # Model spec forms (resolution: argument > VIZIER_MODEL env > persisted > default):
 #   haiku | sonnet | opus | <full claude model id>   → `claude -p` with your own login
-#   openai/<model>                                    → OpenAI-compatible chat endpoint at
-#                                                       VIZIER_OPENAI_BASE_URL (+ optional
-#                                                       VIZIER_OPENAI_API_KEY)
+#   http://host:port#<model>                          → OpenAI-compatible chat endpoint
+#                                                       (/v1 appended when the URL has no path;
+#                                                       VIZIER_OPENAI_API_KEY sent if set)
+#   openai/<model>                                    → same, endpoint from VIZIER_OPENAI_BASE_URL
 # State persists to ~/.claude/vizier.json as {"model": "...", "auto": true|false}.
 
 set -uo pipefail
@@ -139,16 +140,33 @@ EOF
 ask_brain() { # $1 model spec, $2 prompt text
 	local spec="$1" prompt="$2" out
 	case "$spec" in
-	openai/*)
-		local base="${VIZIER_OPENAI_BASE_URL:-}" model="${spec#openai/}"
-		[ -n "$base" ] || { echo "Model $spec needs VIZIER_OPENAI_BASE_URL (an OpenAI-compatible /v1 endpoint)." >&2; return 1; }
+	openai/* | http://* | https://*)
+		local base model
+		if [ "${spec#openai/}" != "$spec" ]; then
+			base="${VIZIER_OPENAI_BASE_URL:-}" model="${spec#openai/}"
+			[ -n "$base" ] || { echo "Model $spec needs VIZIER_OPENAI_BASE_URL, or name the endpoint in the spec: /vizier model http://host:port#$model" >&2; return 1; }
+		else
+			case "$spec" in
+			*#?*) base="${spec%%#*}" model="${spec#*#}" ;;
+			*) echo "Name the model after the endpoint, sire: /vizier model ${spec%%#*}#<model>" >&2; return 1 ;;
+			esac
+		fi
+		base="${base%/}"
+		# host[:port] alone → assume the conventional /v1 prefix.
+		case "${base#*://}" in */*) ;; *) base="$base/v1" ;; esac
 		local body
 		body="$(jq -n --arg m "$model" --arg p "$prompt" '{model: $m, messages: [{role: "user", content: $p}]}')"
-		out="$(curl -sS --max-time 50 -X POST "${base%/}/chat/completions" \
+		out="$(curl -sS --max-time 100 -X POST "$base/chat/completions" \
 			-H 'Content-Type: application/json' \
 			${VIZIER_OPENAI_API_KEY:+-H "Authorization: Bearer $VIZIER_OPENAI_API_KEY"} \
 			-d "$body" 2>&1)" || { echo "The Vizier could not reach $base: ${out:0:200}" >&2; return 1; }
-		printf '%s' "$out" | jq -r '.choices[0].message.content // empty' 2>/dev/null
+		local text
+		text="$(printf '%s' "$out" | jq -r '.choices[0].message.content // empty' 2>/dev/null)"
+		if [ -z "$text" ]; then
+			echo "$base returned no content for $model: $(printf '%s' "$out" | jq -r '.error.message // .error // .' 2>/dev/null | head -c 200)" >&2
+			return 1
+		fi
+		printf '%s' "$text"
 		;;
 	*)
 		# VIZIER_NESTED guards against the Vizier appraising himself; --setting-sources ""
@@ -172,11 +190,12 @@ appraise() { # $1 transcript path, $2 model spec, $3 brief (true|false)  → set
 		TAKE="No assistant turn to appraise yet, sire."
 		return 1
 	fi
-	if ! TAKE="$(ask_brain "$2" "$(vizier_prompt "$user" "$assistant" "$3")")" || [ -z "$(printf '%s' "$TAKE" | tr -d '[:space:]')" ]; then
+	if ! TAKE="$(ask_brain "$2" "$(vizier_prompt "$user" "$assistant" "$3")" 2>&1)" || [ -z "$(printf '%s' "$TAKE" | tr -d '[:space:]')" ]; then
 		TAKE="The Vizier said nothing (${2}): ${TAKE:-empty response}"
 		return 1
 	fi
-	TAKE="$(printf '%s' "$TAKE" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+	# Drop leading blank lines (thinking models often emit a few) and trailing whitespace.
+	TAKE="$(printf '%s' "$TAKE" | sed -e '/./,$!d' -e 's/[[:space:]]*$//')"
 	dbg "brain answered $(printf '%s' "$TAKE" | wc -c | tr -d ' ') bytes"
 	return 0
 }
@@ -207,10 +226,22 @@ hook_prompt() {
 		fi
 		;;
 	model)
-		block "🐉 The Vizier speaks through $(resolve_model "") (persisted: $(state_get model || true)${VIZIER_MODEL:+, env VIZIER_MODEL=$VIZIER_MODEL}).
-Choose another with /vizier model <spec>:
-  haiku | sonnet | opus | <full claude model id>   — via your own claude login
-  openai/<model>                                    — OpenAI-compatible endpoint at VIZIER_OPENAI_BASE_URL"
+		local current persisted source
+		current="$(resolve_model "")"; persisted="$(state_get model)"
+		if [ -n "${VIZIER_MODEL:-}" ]; then source="from VIZIER_MODEL env"
+		elif [ -n "$persisted" ]; then source="persisted in $STATE_FILE"
+		else source="the default; nothing chosen yet"; fi
+		block "🐉 The Vizier speaks through $current ($source).
+
+Choose another with /vizier model <spec>, where <spec> is one of:
+  haiku | sonnet | opus | <claude model id>
+      your own claude login
+  http://host:port#<model>
+      any OpenAI-compatible endpoint, e.g.
+      /vizier model http://sparky:4000#qwen3.8:27b
+      (VIZIER_OPENAI_API_KEY is sent if set)
+
+/vizier <spec> uses a model for one appraisal only."
 		;;
 	model\ *)
 		local spec; spec="$(printf '%s' "${arg#model}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"

@@ -61,10 +61,17 @@ per-invocation argument > `VIZIER_MODEL` env > persisted choice > `haiku`.
 | Spec | Brain |
 |---|---|
 | `haiku`, `sonnet`, `opus`, or a full Claude model id | `claude -p --model <spec>` using your own login |
-| `openai/<model>` | Any OpenAI-compatible `/v1` endpoint at `VIZIER_OPENAI_BASE_URL`, with optional `VIZIER_OPENAI_API_KEY` — handy for a free local model on the LAN |
+| `http://host:port#<model>` | Any OpenAI-compatible endpoint. `/v1` is appended when the URL has no path; `VIZIER_OPENAI_API_KEY` is sent as a bearer token if set |
+| `openai/<model>` | Same, with the endpoint taken from `VIZIER_OPENAI_BASE_URL` (for dotfiles-style provisioning) |
+
+So a free local model on the LAN is one command, persisted:
+
+```
+/vizier model http://sparky:4000#qwen3.8:27b
+```
 
 Claude Code has no model registry an extension can enumerate, so there is no
-picker; `/vizier model` prints the accepted forms instead.
+picker; `/vizier model` prints the current choice and the accepted forms.
 
 ## Sample output
 
@@ -113,8 +120,8 @@ is a fallback that only runs if the hook did not.
 
 - **Auto mode delays the end of each turn** while the Vizier deliberates — about
   ten seconds with Haiku (measured 7–12 s). Hook output cannot be delivered asynchronously, so
-  this is the price of the whisper. A fast local model via `openai/…` is cheaper
-  and often quicker.
+  this is the price of the whisper. A local model on the LAN measured about
+  five seconds.
 - **The transcript format is internal to Claude Code** and may change between
   releases. When it does, the Vizier says "No assistant turn to appraise yet, sire."
 - **The nested `claude -p` call** runs with `--setting-sources ""` and a
