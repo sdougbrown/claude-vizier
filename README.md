@@ -55,6 +55,14 @@ Haiku through your own `claude` login, so no extra credentials are needed.
 | `/vizier key` | Show whether a key is set, masked |
 | `/vizier key clear` | Forget the stored key |
 | `/vizier <spec>` | Override the Vizier's brain for one appraisal |
+| `/vizier second <spec>` | Seat the Grand Eunuch, a rival who answers the Vizier after every `/vizier` (persisted)¹ |
+| `/vizier second` / `second off` | Show the rival / dismiss him¹ |
+| `/vizier <spec> <spec>` | A Vizier and a rival for one appraisal¹ |
+
+¹ Function-hook path only (see How it works). There `/vizier` also reads
+further back: the last three turns with their tool results, plus `git status`,
+the last five commits and the uncommitted diff. Auto mode whispers about the
+last turn alone and never seats the rival.
 
 The chosen model persists to `~/.claude/vizier.json`. Resolution order:
 per-invocation argument > `VIZIER_MODEL` env > persisted choice > `haiku`.
@@ -147,9 +155,15 @@ loaded` and the command hooks serve. Both paths read and write the same
 ### Function hooks
 
 - **`prompt.submit`** answers any prompt starting with `/vizier` with a dropped
-  prompt, so the agent never sees it. `/vizier` returns at once with
-  "The Vizier deliberates…" and the appraisal opens in a pane when it is ready;
-  `again` asks for another, `close` or Esc dismisses it.
+  prompt, so the agent never sees it. `/vizier` opens a pane at once and
+  gathers the court records in the background: the last three turns, every
+  tool call with its result (trimmed), and the working tree. The Vizier
+  appraises from those, judging what the agent did as well as what it said.
+  With a rival seated, the Grand Eunuch then reads the same records and the
+  Vizier's appraisal, concedes what he must, corrects what the records
+  contradict and adds what both missed; his answer joins the pane beneath the
+  Vizier's. `again` asks the same court once more; `close`, Esc, or the next
+  prompt dismisses the pane.
 - **`turn.complete`** in auto mode asks for the one-line verdict after the turn
   has ended and logs it as a transcript line the model never reads. The turn
   is not held up.
@@ -182,7 +196,9 @@ is a fallback that only runs if the hook did not.
   whisper. A local model on the LAN measured about five seconds. The function-hook
   path has no such delay.
 - **An `http(s)://` model receives the agent's words and tool-call arguments** for
-  every appraised turn, over plain HTTP if that is what you point it at. Fine
+  every appraised turn, over plain HTTP if that is what you point it at. On the
+  function-hook path `/vizier` also sends tool results, recent commits and the
+  uncommitted diff. Fine
   for a box on your own LAN; know what you are sending to a cloud provider.
 - **The function-hooks API is early access** and may change between Claude Code
   releases; when the module fails to load, the command hooks take over.
