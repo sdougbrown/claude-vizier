@@ -20,6 +20,9 @@
 
 set -uo pipefail
 
+# hooks/register.tsx loaded in this session and serves the Vizier itself.
+[ -n "${VIZIER_MODULE:-}" ] && exit 0
+
 STATE_FILE="${VIZIER_STATE_FILE:-$HOME/.claude/vizier.json}"
 DEFAULT_MODEL="haiku"
 MAX_ASSISTANT_CHARS=8000

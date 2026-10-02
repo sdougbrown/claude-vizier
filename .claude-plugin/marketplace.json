@@ -9,7 +9,7 @@
       "source": "./plugins/vizier",
       "displayName": "The Vizier",
       "description": "A silver-tongued court eunuch who appraises Claude's last turn with a second model — comedy wrapper, honest critique core.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "author": {
         "name": "Doug Brown",
         "url": "https://github.com/sdougbrown"
