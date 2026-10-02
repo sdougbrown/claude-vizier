@@ -39,8 +39,8 @@ Or, for local development, point Claude Code at the plugin directory:
 claude --plugin-dir ./plugins/vizier
 ```
 
-Requires `jq`. The default brain is Claude Haiku through your own `claude`
-login, so no extra credentials are needed.
+Requires `jq` for the command-hook path (below). The default brain is Claude
+Haiku through your own `claude` login, so no extra credentials are needed.
 
 ## Usage
 
@@ -127,6 +127,40 @@ Your wisdom is boundless, sire. Shall the work proceed?
 
 ## How it works
 
+The plugin carries two implementations of the Vizier, and exactly one serves
+each session:
+
+- **Function hooks** (`hooks/register.tsx`) on Claude Code builds that load
+  hooks modules for the plugin. On session start the module sets
+  `VIZIER_MODULE=1`, which every hook command the session starts afterwards
+  inherits.
+- **Command hooks** (`scripts/vizier.sh`) everywhere else. The script exits at
+  once when `VIZIER_MODULE` is set, so it stands down only once the module has
+  actually loaded. An older build ignores the module entry in
+  `hooks/hooks.json` and runs the script as before.
+
+Whether a session loads hooks modules at all is a rollout switch Claude Code
+receives at startup; when it is off, the debug log says `hooks module not
+loaded` and the command hooks serve. Both paths read and write the same
+`~/.claude/vizier.json`, so `/vizier on`, the model and the key carry over.
+
+### Function hooks
+
+- **`prompt.submit`** answers any prompt starting with `/vizier` with a dropped
+  prompt, so the agent never sees it. `/vizier` returns at once with
+  "The Vizier deliberates…" and the appraisal opens in a pane when it is ready;
+  `again` asks for another, `close` or Esc dismisses it.
+- **`turn.complete`** in auto mode asks for the one-line verdict after the turn
+  has ended and logs it as a transcript line the model never reads. The turn
+  is not held up.
+- Claude models are called through `$.model.complete` on the session's own
+  client; `http(s)://` and `openai/` specs through `$.http.fetch`.
+
+Claude Code draws a dropped prompt's reason and a logged line on one line, so
+anything longer goes to the pane.
+
+### Command hooks
+
 Two hooks, one script, no model in the loop on the agent's side:
 
 - **`UserPromptSubmit`** intercepts any prompt starting with `/vizier`, reads the
@@ -142,15 +176,18 @@ is a fallback that only runs if the hook did not.
 
 ### Caveats
 
-- **Auto mode delays the end of each turn** while the Vizier deliberates — about
-  ten seconds with Haiku (measured 7–12 s). Hook output cannot be delivered asynchronously, so
-  this is the price of the whisper. A local model on the LAN measured about
-  five seconds.
+- **On the command-hook path, auto mode delays the end of each turn** while the
+  Vizier deliberates — about ten seconds with Haiku (measured 7–12 s). Hook
+  output cannot be delivered asynchronously, so this is the price of the
+  whisper. A local model on the LAN measured about five seconds. The function-hook
+  path has no such delay.
 - **An `http(s)://` model receives the agent's words and tool-call arguments** for
   every appraised turn, over plain HTTP if that is what you point it at. Fine
   for a box on your own LAN; know what you are sending to a cloud provider.
+- **The function-hooks API is early access** and may change between Claude Code
+  releases; when the module fails to load, the command hooks take over.
 - **The transcript format is internal to Claude Code** and may change between
-  releases. When it does, the Vizier says "No assistant turn to appraise yet, sire."
+  releases (command-hook path). When it does, the Vizier says "No assistant turn to appraise yet, sire."
 - **The nested `claude -p` call** runs with `--setting-sources ""` and a
   `VIZIER_NESTED` guard so the Vizier never appraises himself.
 - Set `VIZIER_DEBUG_LOG=/path/to/file` to trace what the hooks are doing.

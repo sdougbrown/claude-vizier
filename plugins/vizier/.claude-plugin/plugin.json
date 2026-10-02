@@ -9,5 +9,6 @@
   },
   "repository": "https://github.com/sdougbrown/claude-vizier",
   "license": "MIT",
-  "keywords": ["vizier", "critic", "review", "hooks"]
+  "keywords": ["vizier", "critic", "review", "hooks"],
+  "types": "./types/index.d.ts"
 }
