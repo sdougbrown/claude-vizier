@@ -10,7 +10,8 @@
 //                   ended and logged as a transcript line the model never reads.
 //
 // A drop reason and a $.ui.log line are drawn on one line, so anything longer
-// than a sentence goes to the pane.
+// than a sentence goes to the pane. The pane appraises the turn before it, so
+// the next prompt closes it.
 //
 // Model specs, resolution order and ~/.claude/vizier.json are shared with
 // vizier.sh, so `/vizier on`, the model and the key carry across both paths.
@@ -209,8 +210,8 @@ const say = ($: $, text: string) => $.ui.log(text.replace(/\s*\n\s*/g, ' '))
 
 const show = async ($: $, shown: VizierPage) => {
   await update($, page, () => shown)
-  // Wrapped lines at a typical pane width, the blank lines, and the button row.
-  const rows = shown.text.split('\n').reduce((n, line) => n + Math.max(1, Math.ceil(line.length / 100)), 0) + 2
+  // Wrapped lines at a typical pane width, then the button and key-hint rows.
+  const rows = shown.text.split('\n').reduce((n, line) => n + Math.max(1, Math.ceil(line.length / 100)), 0) + 4
   return $.ui.open({ id: PANE, title: shown.title, focus: true, closeOnEscape: true, rows: Math.min(rows, 40) })
 }
 
@@ -315,7 +316,10 @@ export const register: Register = on => {
 
   on('prompt.submit', async ($, e, next) => {
     const match = COMMAND.exec(e.text.trim())
-    if (!match) return next(e)
+    if (!match) {
+      void $.ui.close({ id: PANE })
+      return next(e)
+    }
     return { drop: await command($, (match[1] ?? '').trim()) }
   })
 
@@ -339,6 +343,9 @@ export const register: Register = on => {
           {spec && <Button key="again" label="again" hotkey="r" onPress={() => void summon($, spec)} />}
           <Button key="close" label="close" hotkey="q" role="dismiss" onPress={() => void $.ui.close({ id: PANE })} />
         </Box>
+        {e.surface === 'terminal' && (
+          <Text dimColor>Esc closes · ctrl+x tab, then {spec ? 'r again, ' : ''}q close · sending a prompt closes it too</Text>
+        )}
       </Box>
     )
   })

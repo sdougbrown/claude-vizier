@@ -22,13 +22,14 @@ type Court = {
   fetches: { url: string; headers: Record<string, string>; body: string }[]
   opened: string[]
   logs: string[]
+  closed: number
   isPlaced: boolean
   envSet: Record<string, string | undefined>
 }
 
 // The world beneath the Vizier: a state file, a model, an endpoint, a transcript.
 const court = (on: On, state: Record<string, unknown> = {}, env: Record<string, string> = {}): Court => {
-  const c: Court = { state, writes: [], prompts: [], fetches: [], opened: [], logs: [], isPlaced: true, envSet: {} }
+  const c: Court = { state, writes: [], prompts: [], fetches: [], opened: [], logs: [], closed: 0, isPlaced: true, envSet: {} }
   mock.env(on, { HOME: '/home/sire', ...env })
   on('env.set', (_$, e) => {
     c.envSet[e.name] = e.value
@@ -58,6 +59,10 @@ const court = (on: On, state: Record<string, unknown> = {}, env: Record<string, 
     return { value: c.isPlaced ? { isPlaced: true } : { isPlaced: false, reason: 'too narrow' } }
   })
   on('ui.status', () => ({ value: undefined }))
+  on('ui.close', () => {
+    c.closed += 1
+    return { value: undefined }
+  })
   on('ui.log', (_$, e) => {
     c.logs.push(e.text)
     return { value: undefined }
@@ -86,10 +91,11 @@ describe('vizier module', () => {
     expect(c.envSet.VIZIER_MODULE).toBe(undefined)
   })
 
-  test('leaves other prompts alone', async ($, on) => {
-    court(on)
+  test('leaves other prompts alone and closes the pane they make stale', async ($, on) => {
+    const c = court(on)
     on('prompt.submit', (_$, e) => ({ text: e.text }))
     expect((await submit($, '/vizierish please')).text).toBe('/vizierish please')
+    expect(c.closed).toBe(1)
   })
 
   test('/vizier off drops the prompt and persists auto=false', async ($, on) => {
@@ -140,6 +146,7 @@ describe('vizier module', () => {
       const pane = await $.ui.mount({ plugin: 'vizier', surface, component: 'Pane', requestId: 'vizier', props: { title: 'x', isFocused: false, bodyColumns: 60, placement: 'inline' } } as never)
       expect((await pane.find({ type: 'Text' }))?.text).toBe('Most judicious, sire.')
       expect(await pane.findAll({ type: 'Button' })).toHaveLength(2)
+      expect((await pane.findAll({ type: 'Text' })).length).toBe(surface === 'terminal' ? 2 : 1)
     }
   })
 
