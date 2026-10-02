@@ -41,6 +41,7 @@ type Court = {
   fetches: { url: string; headers: Record<string, string>; body: Record<string, unknown> }[]
   endpoint: (body: Record<string, unknown>) => { status: number; text: string }
   curlExit: number
+  hasCurl: boolean
   opened: string[]
   logs: string[]
   closed: number
@@ -71,7 +72,7 @@ const run = (stdout: string, exitCode = 0) => ({
 
 // The world beneath the Vizier: a state file, a repository, models, an endpoint, a transcript, a pane.
 const court = (on: On, state: Record<string, unknown> = {}, env: Record<string, string> = {}): Court => {
-  const c: Court = { state, writes: [], prompts: [], fetches: [], endpoint: () => chat('A local whisper, sire.'), curlExit: 0, opened: [], logs: [], closed: 0, isPlaced: true, isRepo: true, envSet: {} }
+  const c: Court = { state, writes: [], prompts: [], fetches: [], endpoint: () => chat('A local whisper, sire.'), curlExit: 0, hasCurl: true, opened: [], logs: [], closed: 0, isPlaced: true, isRepo: true, envSet: {} }
   let isOpen = false
   mock.env(on, { HOME: '/home/sire', ...env })
   on('env.set', (_$, e) => {
@@ -83,7 +84,12 @@ const court = (on: On, state: Record<string, unknown> = {}, env: Record<string, 
     return { value: JSON.stringify(c.state) }
   })
   on('process.run', (_$, e) => {
+    if (e.argv[0] === 'curl' && e.argv[1] === '--version') {
+      if (!c.hasCurl) throw new Error('curl: command not found')
+      return run('curl 8.7.1')
+    }
     if (e.argv[0] === 'curl') {
+      if (!c.hasCurl) throw new Error('curl: command not found')
       const sent = parseCurlConfig(e.init?.stdin ?? '')
       c.fetches.push(sent)
       if (c.curlExit) return run('', c.curlExit)
@@ -103,6 +109,12 @@ const court = (on: On, state: Record<string, unknown> = {}, env: Record<string, 
     c.prompts.push({ model: e.model, prompt: e.prompt, effort: e.effort })
     const text = ANSWERS[e.model] ?? 'A courtier, sire.'
     return { value: { isAnswered: true, text, usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } }
+  })
+  on('http.fetch', (_$, e) => {
+    const sent = { url: e.url, headers: (e.init?.headers ?? {}) as Record<string, string>, body: JSON.parse(e.init?.body ?? '{}') }
+    c.fetches.push(sent)
+    const answer = c.endpoint(sent.body)
+    return { value: { status: answer.status, ok: answer.status < 400, headers: {}, text: answer.text } }
   })
   on('session.messages', () => ({ value: TURNS }))
   on('ui.open', (_$, e) => {
@@ -306,6 +318,19 @@ describe('vizier module', () => {
     expect(c.fetches[0]?.url).toBe('http://sparky:4000/v1/chat/completions')
     expect(c.fetches[0]?.headers.Authorization).toBe('Bearer sk-local-9999')
     expect(c.fetches[0]?.body.model).toBe('qwen')
+    expect(c.fetches[0]?.body.reasoning_effort).toBe('none')
+    expect(c.logs).toEqual(['🐉 A local whisper, sire.'])
+  })
+
+  test('without curl, endpoints are reached through $.http.fetch', async ($, on) => {
+    const clock = mock.clock(on)
+    const c = court(on, { auto: true, model: 'http://sparky:4000#qwen', key: 'sk-local-9999' })
+    c.hasCurl = false
+    on('turn.complete', (_$, e) => ({ text: e.answer }))
+    await complete($)
+    await clock.settle()
+    expect(c.fetches[0]?.url).toBe('http://sparky:4000/v1/chat/completions')
+    expect(c.fetches[0]?.headers.Authorization).toBe('Bearer sk-local-9999')
     expect(c.fetches[0]?.body.reasoning_effort).toBe('none')
     expect(c.logs).toEqual(['🐉 A local whisper, sire.'])
   })

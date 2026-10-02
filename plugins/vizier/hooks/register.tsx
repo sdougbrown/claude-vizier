@@ -76,10 +76,23 @@ const fail = (text: string): Take => ({ isOk: false, text })
 // curl's config syntax: a double-quoted value with \ and " escaped.
 const curlQuote = (text: string) => `"${text.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 
-// One POST through curl rather than $.http.fetch, whose host gives up after
-// 30 s, too soon for a local model loading or reading a long record. The URL,
-// key and body reach curl as a config on stdin, never on its command line.
+let curlChecked: Promise<boolean> | undefined
+
+const hasCurl = ($: $) =>
+  (curlChecked ??= $.process.run(['curl', '--version'], { timeoutMs: 5000 }).then(
+    ran => ran.exitCode === 0,
+    () => false,
+  ))
+
+// One POST, through curl where it runs: $.http.fetch's host gives up after
+// 30 s, which a local model loading or reading a long record can pass. The
+// URL, key and body reach curl as a config on stdin, never on its command line.
 const post = async ($: $, url: string, key: string, body: unknown) => {
+  if (!(await hasCurl($))) {
+    const headers = { 'Content-Type': 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) }
+    const res = await $.http.fetch(url, { method: 'POST', headers, body: JSON.stringify(body) })
+    return { status: res.status, text: res.text }
+  }
   const config = [
     'silent',
     'show-error',

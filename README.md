@@ -168,7 +168,10 @@ loaded` and the command hooks serve. Both paths read and write the same
   has ended and logs it as a transcript line the model never reads. The turn
   is not held up.
 - Claude models are called through `$.model.complete` on the session's own
-  client; `http(s)://` and `openai/` specs through `$.http.fetch`.
+  client at the lowest effort; `http(s)://` and `openai/` specs through curl
+  with a 100 s limit, or through `$.http.fetch` (30 s) where curl does not run.
+  Endpoint requests ask for `reasoning_effort: "none"`, and are sent again
+  without it to a server that refuses the field.
 
 Claude Code draws a dropped prompt's reason and a logged line on one line, so
 anything longer goes to the pane.
