@@ -1,7 +1,7 @@
 {
   "name": "vizier",
   "displayName": "The Vizier",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A silver-tongued court eunuch who appraises Claude's last turn with a second model — comedy wrapper, honest critique core.",
   "author": {
     "name": "Doug Brown",
