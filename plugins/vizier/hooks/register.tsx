@@ -338,7 +338,7 @@ export const register: Register = on => {
     const spec = shown?.spec
     return (
       <Box flexDirection="column">
-        <Text>{shown?.text ?? 'The Vizier has nothing to say, sire.'}</Text>
+        <Text>🐉 {shown?.text ?? 'The Vizier has nothing to say, sire.'}</Text>
         <Box flexDirection="row" gap={2} marginTop={1}>
           {spec && <Button key="again" label="again" hotkey="r" onPress={() => void summon($, spec)} />}
           <Button key="close" label="close" hotkey="q" role="dismiss" onPress={() => void $.ui.close({ id: PANE })} />

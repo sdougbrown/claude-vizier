@@ -144,7 +144,7 @@ describe('vizier module', () => {
     expect(c.opened).toEqual(['🐉 The Vizier (haiku)', '🐉 The Vizier (haiku)'])
     for (const surface of ['terminal', 'desktop'] as const) {
       const pane = await $.ui.mount({ plugin: 'vizier', surface, component: 'Pane', requestId: 'vizier', props: { title: 'x', isFocused: false, bodyColumns: 60, placement: 'inline' } } as never)
-      expect((await pane.find({ type: 'Text' }))?.text).toBe('Most judicious, sire.')
+      expect((await pane.find({ type: 'Text' }))?.text).toBe('🐉 Most judicious, sire.')
       expect(await pane.findAll({ type: 'Button' })).toHaveLength(2)
       expect((await pane.findAll({ type: 'Text' })).length).toBe(surface === 'terminal' ? 2 : 1)
     }
@@ -200,7 +200,7 @@ describe('vizier module', () => {
     await clock.settle()
     expect(c.logs.length).toBe(0)
     const pane = await $.ui.mount({ plugin: 'vizier', surface: 'terminal', component: 'Pane', requestId: 'vizier', props: { title: 'x', isFocused: false, bodyColumns: 60, placement: 'inline' } } as never)
-    expect((await pane.find({ type: 'Text' }))?.text).toBe('The Vizier said nothing (http://sparky:4000): Name the model after the endpoint, sire: /vizier model http://sparky:4000#<model>')
+    expect((await pane.find({ type: 'Text' }))?.text).toBe('🐉 The Vizier said nothing (http://sparky:4000): Name the model after the endpoint, sire: /vizier model http://sparky:4000#<model>')
   })
 
   test('a pane the surface cannot place falls back to one logged line', async ($, on) => {
