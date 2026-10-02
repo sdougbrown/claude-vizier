@@ -38,6 +38,7 @@ const OLDER_TURNS_CHARS = 6000
 const MAX_TOOL_INPUT_CHARS = 300
 const MAX_TOOL_RESULT_CHARS = 600
 const MAX_TREE_CHARS = 6000
+const ENDPOINT_TIMEOUT_S = 100
 const COMMAND = /^\/vizier(?::vizier)?(?:\s+([\s\S]*))?$/
 
 const page = atom({ plugin: 'vizier', key: 'page' } as const, null as VizierPage | null)
@@ -72,17 +73,27 @@ const saveState = async ($: $, patch: State, drop?: keyof State) => {
 
 const fail = (text: string): Take => ({ isOk: false, text })
 
-const withTimeout = async <T,>($: $, ms: number, work: Promise<T>): Promise<T> => {
-  const stop = new AbortController()
-  const timer = $.clock.sleep(ms, { signal: stop.signal }).then(
-    () => Promise.reject(new Error(`no answer in ${ms / 1000} s`)),
-    () => new Promise<never>(() => {}),
-  )
-  try {
-    return await Promise.race([work, timer])
-  } finally {
-    stop.abort()
-  }
+// curl's config syntax: a double-quoted value with \ and " escaped.
+const curlQuote = (text: string) => `"${text.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+
+// One POST through curl rather than $.http.fetch, whose host gives up after
+// 30 s, too soon for a local model loading or reading a long record. The URL,
+// key and body reach curl as a config on stdin, never on its command line.
+const post = async ($: $, url: string, key: string, body: unknown) => {
+  const config = [
+    'silent',
+    'show-error',
+    `max-time = ${ENDPOINT_TIMEOUT_S}`,
+    `url = ${curlQuote(url)}`,
+    'header = "Content-Type: application/json"',
+    ...(key ? [`header = ${curlQuote(`Authorization: Bearer ${key}`)}`] : []),
+    `data-binary = ${curlQuote(JSON.stringify(body))}`,
+    'write-out = "\\n%{http_code}"',
+  ].join('\n')
+  const ran = await $.process.run(['curl', '--config', '-'], { stdin: `${config}\n`, timeoutMs: (ENDPOINT_TIMEOUT_S + 10) * 1000 })
+  if (ran.exitCode !== 0) throw new Error(ran.exitCode === 28 ? `no answer within ${ENDPOINT_TIMEOUT_S} s` : ran.stderr.trim() || `curl exited ${ran.exitCode}`)
+  const cut = ran.stdout.lastIndexOf('\n')
+  return { status: Number(ran.stdout.slice(cut + 1)), text: ran.stdout.slice(0, Math.max(cut, 0)) }
 }
 
 const askEndpoint = async ($: $, spec: string, prompt: string): Promise<Take> => {
@@ -102,34 +113,30 @@ const askEndpoint = async ($: $, spec: string, prompt: string): Promise<Take> =>
   // host[:port] alone → assume the conventional /v1 prefix.
   if (!base.replace(/^[a-z]+:\/\//i, '').includes('/')) base += '/v1'
   const key = await resolveKey($)
-  let raw: string
+  const request = { model, messages: [{ role: 'user', content: prompt }] }
+  let res: { status: number; text: string }
   try {
-    const res = await withTimeout(
-      $,
-      100_000,
-      $.http.fetch(`${base}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) },
-        body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }] }),
-      }),
-    )
-    raw = res.text
+    // Thinking off where the server takes the OpenAI spelling; a server that
+    // refuses the field is asked again without it.
+    res = await post($, `${base}/chat/completions`, key, { ...request, reasoning_effort: 'none' })
+    if (res.status === 400 || res.status === 422) res = await post($, `${base}/chat/completions`, key, request)
   } catch (err) {
     return fail(`could not reach ${base}: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`)
   }
   let body: { choices?: { message?: { content?: string } }[]; error?: { message?: string } | string } = {}
   try {
-    body = JSON.parse(raw)
+    body = JSON.parse(res.text)
   } catch {}
-  const text = body.choices?.[0]?.message?.content
-  if (text) return { isOk: true, text }
-  const why = typeof body.error === 'string' ? body.error : (body.error?.message ?? raw)
+  const text = body.choices?.[0]?.message?.content?.replace(/<think>[\s\S]*?<\/think>/g, '')
+  if (text?.trim()) return { isOk: true, text }
+  const why = typeof body.error === 'string' ? body.error : (body.error?.message ?? (res.text || `HTTP ${res.status}`))
   return fail(`${base} returned no content for ${model}: ${why.slice(0, 200)}`)
 }
 
 const askClaude = async ($: $, spec: string, prompt: string): Promise<Take> => {
   try {
-    const r = await $.model.complete({ model: spec, prompt, maxTokens: 1024, timeoutMs: 100_000 })
+    // The lowest effort the API takes: these are quick opinions, not hard problems.
+    const r = await $.model.complete({ model: spec, prompt, maxTokens: 1024, effort: 'low', timeoutMs: 100_000 })
     if (r.isAnswered) return { isOk: true, text: r.text }
     return fail(r.reason === 'api-error' ? `api-error ${r.status ?? ''} ${r.error}` : r.reason)
   } catch (err) {

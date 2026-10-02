@@ -37,8 +37,10 @@ const ANSWERS: Record<string, string> = {
 type Court = {
   state: Record<string, unknown>
   writes: Record<string, unknown>[]
-  prompts: { model: string; prompt: string }[]
-  fetches: { url: string; headers: Record<string, string>; body: string }[]
+  prompts: { model: string; prompt: string; effort?: string }[]
+  fetches: { url: string; headers: Record<string, string>; body: Record<string, unknown> }[]
+  endpoint: (body: Record<string, unknown>) => { status: number; text: string }
+  curlExit: number
   opened: string[]
   logs: string[]
   closed: number
@@ -47,13 +49,29 @@ type Court = {
   envSet: Record<string, string | undefined>
 }
 
+// The values of a curl config the module writes: url, headers, body.
+const parseCurlConfig = (config: string) => {
+  const sent = { url: '', headers: {} as Record<string, string>, body: {} as Record<string, unknown> }
+  for (const line of config.split('\n')) {
+    const m = /^([a-z-]+) = "(.*)"$/.exec(line)
+    if (!m) continue
+    const value = (m[2] ?? '').replace(/\\(.)/g, '$1')
+    if (m[1] === 'url') sent.url = value
+    if (m[1] === 'header') sent.headers[value.slice(0, value.indexOf(':'))] = value.slice(value.indexOf(':') + 2)
+    if (m[1] === 'data-binary') sent.body = JSON.parse(value)
+  }
+  return sent
+}
+
+const chat = (content: string) => ({ status: 200, text: JSON.stringify({ choices: [{ message: { content } }] }) })
+
 const run = (stdout: string, exitCode = 0) => ({
   value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
 })
 
 // The world beneath the Vizier: a state file, a repository, models, an endpoint, a transcript, a pane.
 const court = (on: On, state: Record<string, unknown> = {}, env: Record<string, string> = {}): Court => {
-  const c: Court = { state, writes: [], prompts: [], fetches: [], opened: [], logs: [], closed: 0, isPlaced: true, isRepo: true, envSet: {} }
+  const c: Court = { state, writes: [], prompts: [], fetches: [], endpoint: () => chat('A local whisper, sire.'), curlExit: 0, opened: [], logs: [], closed: 0, isPlaced: true, isRepo: true, envSet: {} }
   let isOpen = false
   mock.env(on, { HOME: '/home/sire', ...env })
   on('env.set', (_$, e) => {
@@ -65,6 +83,13 @@ const court = (on: On, state: Record<string, unknown> = {}, env: Record<string, 
     return { value: JSON.stringify(c.state) }
   })
   on('process.run', (_$, e) => {
+    if (e.argv[0] === 'curl') {
+      const sent = parseCurlConfig(e.init?.stdin ?? '')
+      c.fetches.push(sent)
+      if (c.curlExit) return run('', c.curlExit)
+      const answer = c.endpoint(sent.body)
+      return run(`${answer.text}\n${answer.status}`)
+    }
     if (e.argv[0] === 'git') {
       const verb = e.argv.find(a => a in GIT) ?? ''
       return c.isRepo ? run(GIT[verb] ?? '') : run('', 128)
@@ -75,13 +100,9 @@ const court = (on: On, state: Record<string, unknown> = {}, env: Record<string, 
     return run('')
   })
   on('model.complete', (_$, e) => {
-    c.prompts.push({ model: e.model, prompt: e.prompt })
+    c.prompts.push({ model: e.model, prompt: e.prompt, effort: e.effort })
     const text = ANSWERS[e.model] ?? 'A courtier, sire.'
     return { value: { isAnswered: true, text, usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } }
-  })
-  on('http.fetch', (_$, e) => {
-    c.fetches.push({ url: e.url, headers: (e.init?.headers ?? {}) as Record<string, string>, body: String(e.init?.body ?? '') })
-    return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ choices: [{ message: { content: 'A local whisper, sire.' } }] }) } }
   })
   on('session.messages', () => ({ value: TURNS }))
   on('ui.open', (_$, e) => {
@@ -220,6 +241,7 @@ describe('vizier module', () => {
     expect(r.drop).toBe('🐉 The Vizier deliberates (haiku), and the Grand Eunuch (sonnet) awaits his turn…')
     await clock.settle()
     expect(c.prompts.map(p => p.model)).toEqual(['haiku', 'sonnet'])
+    expect(c.prompts.map(p => p.effort)).toEqual(['low', 'low'])
     const rival = c.prompts[1]?.prompt ?? ''
     expect(rival).toContain('the Grand Eunuch of the Eastern Palace')
     expect(rival).toContain('<the_viziers_appraisal>\nMost judicious, sire.\n</the_viziers_appraisal>')
@@ -283,8 +305,40 @@ describe('vizier module', () => {
     await clock.settle()
     expect(c.fetches[0]?.url).toBe('http://sparky:4000/v1/chat/completions')
     expect(c.fetches[0]?.headers.Authorization).toBe('Bearer sk-local-9999')
-    expect(JSON.parse(c.fetches[0]?.body ?? '{}').model).toBe('qwen')
+    expect(c.fetches[0]?.body.model).toBe('qwen')
+    expect(c.fetches[0]?.body.reasoning_effort).toBe('none')
     expect(c.logs).toEqual(['🐉 A local whisper, sire.'])
+  })
+
+  test('an endpoint that refuses reasoning_effort is asked again without it', async ($, on) => {
+    const clock = mock.clock(on)
+    const c = court(on, { auto: true, model: 'http://sparky:4000#qwen' })
+    c.endpoint = body => (body.reasoning_effort ? { status: 400, text: '{"error":{"message":"unknown field"}}' } : chat('Plainly, sire.'))
+    on('turn.complete', (_$, e) => ({ text: e.answer }))
+    await complete($)
+    await clock.settle()
+    expect(c.fetches.map(f => f.body.reasoning_effort)).toEqual(['none', undefined])
+    expect(c.logs).toEqual(['🐉 Plainly, sire.'])
+  })
+
+  test('thinking a server leaves in the reply is dropped', async ($, on) => {
+    const clock = mock.clock(on)
+    const c = court(on, { auto: true, model: 'http://sparky:4000#qwen' })
+    c.endpoint = () => chat('<think>\nthe agent hedged\n</think>\n\nA hedge, sire.')
+    on('turn.complete', (_$, e) => ({ text: e.answer }))
+    await complete($)
+    await clock.settle()
+    expect(c.logs).toEqual(['🐉 A hedge, sire.'])
+  })
+
+  test('an endpoint that never answers is reported, not waited on forever', async ($, on) => {
+    const clock = mock.clock(on)
+    const c = court(on, { model: 'http://sparky:4000#qwen' })
+    c.curlExit = 28
+    await submit($, '/vizier')
+    await clock.settle()
+    const { texts } = await paneTexts($)
+    expect(texts[1]).toBe('The Vizier said nothing (http://sparky:4000#qwen): could not reach http://sparky:4000/v1: no answer within 100 s')
   })
 
   test('auto mode ignores subagent turns, aborted turns, and auto=false', async ($, on) => {
